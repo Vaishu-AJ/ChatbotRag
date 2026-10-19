@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rag-system"
+version = "0.1.0"
+description = "A Python RAG application for answering questions from PDF documents."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "openai>=1.0.0",
+    "pypdf>=4.0.0",
+    "python-dotenv>=1.0.0",
+    "chromadb>=0.5.0",
+    "streamlit>=1.40.0",
+]
+
+[project.scripts]
+rag-system = "rag_system.cli:main"
+rag-chat = "rag_system.web_app:main"
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0.0", "ruff>=0.5.0"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"

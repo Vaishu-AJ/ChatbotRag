@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# Environment and secrets
+.env
+*.env
+
+# Local data and generated indexes
+data/documents/*
+!data/documents/.gitkeep
+data/vector_store/
+data/index_manifests/
+data/chat_history.json
+data/processed/*
+!data/processed/.gitkeep
+
+# Tool caches
+.pytest_cache/
+.ruff_cache/
