@@ -1,0 +1,19 @@
+{
+  "name": "paperpilot-react",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build"
+  },
+  "dependencies": {
+    "react": "19.1.1",
+    "react-dom": "19.1.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "4.6.0",
+    "typescript": "5.8.3",
+    "vite": "6.3.5"
+  }
+}

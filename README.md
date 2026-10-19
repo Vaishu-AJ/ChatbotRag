@@ -16,10 +16,13 @@ The project loads text from PDFs, indexes it locally, retrieves relevant passage
 2. Install the project with development tools: `python -m pip install -e ".[dev]"`
 3. Install [Ollama](https://ollama.com/download), start it, then download the default models: `ollama pull llama3.2:3b` and `ollama pull nomic-embed-text`.
 4. Place PDF files in `data/documents/` (or set `PDF_DIRECTORY` in `.env`).
-5. Start the chatbot: `streamlit run app.py`.
-6. Upload PDFs in the sidebar; the app indexes them automatically. Ask questions in the chat box, start a new chat, or reopen a previous conversation from the sidebar.
+5. In one terminal, start the Python API: `uvicorn rag_system.api:app --reload`.
+6. In a second terminal, enter the React frontend folder and start Vite: `cd frontend` then `npm install` and `npm run dev`.
+7. Open the local URL printed by Vite (usually `http://localhost:5173`). Upload PDFs in the sidebar; the API indexes them automatically. Ask questions, start chats, or reopen and delete saved conversations.
 
-Answers stream into the chat as the local model generates them. Chat history is saved locally in `data/chat_history.json`.
+To run the built React app from one server instead, run `cd frontend && npm run build`, then start the API with `uvicorn rag_system.api:app --reload` and open `http://127.0.0.1:8000`.
+
+Answers stream into the React chat as the model generates them. Chat history is saved locally in `data/chat_history.json`. Streamlit remains available as a legacy UI with `streamlit run app.py`.
 
 ## Project layout
 
@@ -30,6 +33,7 @@ RAG System/
 │   ├── processed/       # Optional extracted/intermediate data
 │   └── vector_store/    # Local vector index (created when implemented)
 ├── src/rag_system/
+│   ├── api.py           # FastAPI backend for the React frontend
 │   ├── config.py        # Environment and application settings
 │   ├── document_loader.py
 │   ├── chunking.py
@@ -39,8 +43,9 @@ RAG System/
 │   ├── generator.py
 │   ├── pipeline.py
 │   ├── cli.py
-│   └── web_app.py       # Streamlit PDF chatbot
-├── app.py               # Web app entry point
+│   └── web_app.py       # Legacy Streamlit PDF chatbot
+├── frontend/            # React + Vite user interface
+├── app.py               # Legacy Streamlit entry point
 └── tests/               # Future unit and integration tests
 ```
 
