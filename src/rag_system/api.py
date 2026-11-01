@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 import threading
 import time
 import uuid
@@ -35,7 +36,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-HISTORY_FILE = PROJECT_ROOT / "data" / "chat_history.json"
+HISTORY_FILE = Path(
+    os.getenv("CHAT_HISTORY_FILE", str(PROJECT_ROOT / "data" / "chat_history.json"))
+).expanduser()
 EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="pdf-indexer")
 INDEX_LOCK = threading.Lock()
 INDEX_STATE: dict[str, str | int] = {"status": "idle", "message": "", "chunks": 0}

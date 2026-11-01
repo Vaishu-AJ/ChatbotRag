@@ -65,10 +65,20 @@ function App() {
   const [error, setError] = useState("");
   const [uploading, setUploading] = useState(false);
   const [deleting, setDeleting] = useState("");
+  const [documentToDelete, setDocumentToDelete] = useState("");
   const endRef = useRef(null);
   const fileRef = useRef(null);
   const composerRef = useRef(null);
   const activeChat = chats.find((chat) => chat.id === activeId);
+
+  useEffect(() => {
+    if (!documentToDelete) return undefined;
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") setDocumentToDelete("");
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [documentToDelete]);
 
   const copyMessage = async (content, key) => {
     try {
@@ -193,7 +203,7 @@ function App() {
   };
 
   const deleteDocument = async (name) => {
-    if (!window.confirm(`Delete ${name} from your documents?`)) return;
+    setDocumentToDelete("");
     setDeleting(name); setError("");
     try {
       const response = await api(`/api/documents/${encodeURIComponent(name)}`, { method: "DELETE" });
@@ -330,7 +340,7 @@ function App() {
         {documents.length > 0 && <div className="document-box">
           {documents.map((name) => <div className="document-row" key={name}>
             <div className="document-name" title={name}><span className="pdf-icon">{documentLabel(name)}</span><span>{name}</span></div>
-            <button className="delete-document" aria-label={`Delete ${name}`} title="Delete document" disabled={Boolean(deleting) || index.status === "indexing" || index.status === "queued"} onClick={() => deleteDocument(name)}>{deleting === name ? "…" : "×"}</button>
+            <button className="delete-document" aria-label={`Delete ${name}`} title="Delete document" disabled={Boolean(deleting) || index.status === "indexing" || index.status === "queued"} onClick={() => setDocumentToDelete(name)}>{deleting === name ? "…" : "×"}</button>
           </div>)}
         </div>}
         {index.status === "indexing" || index.status === "queued" ? <div className="status-line"><span className="pulse" />{index.message || "Indexing documents…"}</div> : null}
@@ -381,6 +391,18 @@ function App() {
         <div className="composer-foot">Answers are generated from your documents. Check important details against the source PDFs.</div>
       </form>
     </main>
+    {documentToDelete && <div className="confirm-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setDocumentToDelete(""); }}>
+      <section className="confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="delete-title" aria-describedby="delete-description">
+        <div className="confirm-icon" aria-hidden="true">×</div>
+        <div className="confirm-kicker">Remove document</div>
+        <h2 id="delete-title">Delete this file?</h2>
+        <p id="delete-description">“{documentToDelete}” will be removed from your knowledge base. You can add it again later.</p>
+        <div className="confirm-actions">
+          <button className="confirm-cancel" type="button" onClick={() => setDocumentToDelete("")}>Keep document</button>
+          <button className="confirm-delete" type="button" autoFocus onClick={() => deleteDocument(documentToDelete)}>Delete file</button>
+        </div>
+      </section>
+    </div>}
   </div>;
 }
 
