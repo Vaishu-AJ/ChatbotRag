@@ -18,9 +18,14 @@ class Settings:
     openai_api_key: str | None
     chat_model: str
     embedding_model: str
+    vision_model: str
     ollama_base_url: str
     pdf_directory: Path
     vector_store_directory: Path
+    okf_directory: Path
+    database_url: str | None
+    database_media_base_url: str
+    database_media_token: str | None
 
 
 def get_settings() -> Settings:
@@ -47,7 +52,12 @@ def get_settings() -> Settings:
             if provider == "ollama"
             else os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
         ),
+        vision_model=os.getenv("OLLAMA_VISION_MODEL", "gemma3:4b"),
         ollama_base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/"),
         pdf_directory=project_path("PDF_DIRECTORY", "data/documents"),
         vector_store_directory=project_path("VECTOR_STORE_DIRECTORY", "data/vector_store"),
+        okf_directory=project_path("OKF_DIRECTORY", "data/okf"),
+        database_url=os.getenv("DATABASE_URL", "").strip() or None,
+        database_media_base_url=os.getenv("DATABASE_MEDIA_BASE_URL", "").strip().rstrip("/"),
+        database_media_token=os.getenv("DATABASE_MEDIA_TOKEN", "").strip() or None,
     )
