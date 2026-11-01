@@ -2,14 +2,10 @@ services:
   - type: web
     name: rag-system
     runtime: python
-    plan: starter
+    plan: free
     buildCommand: pip install ".[media]" && cd frontend && npm ci && npm run build
     startCommand: uvicorn rag_system.api:app --host 0.0.0.0 --port $PORT --app-dir src
     healthCheckPath: /api/bootstrap
-    disk:
-      name: rag-data
-      mountPath: /var/data
-      sizeGB: 10
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.8
@@ -18,8 +14,8 @@ services:
       - key: OPENAI_API_KEY
         sync: false
       - key: PDF_DIRECTORY
-        value: /var/data/documents
+        value: /tmp/rag-data/documents
       - key: VECTOR_STORE_DIRECTORY
-        value: /var/data/vector_store
+        value: /tmp/rag-data/vector_store
       - key: CHAT_HISTORY_FILE
-        value: /var/data/chat_history.json
+        value: /tmp/rag-data/chat_history.json
