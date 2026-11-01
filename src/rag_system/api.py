@@ -1,7 +1,9 @@
 """FastAPI backend used by the React PDF chat interface."""
 
 import json
+import logging
 import threading
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
@@ -10,17 +12,21 @@ from typing import Annotated
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from openai import OpenAI
 from pydantic import BaseModel
 
 from .config import PROJECT_ROOT, get_settings
 from .local_models import ollama_request
-from .pipeline import ask_stream, index_pdfs
+from .pipeline import ask_stream_with_media, index_pdfs
+from .media_proxy import resolve_media_path
 from .vector_store import get_provider_collection
+from .multimodal import SUPPORTED_EXTENSIONS
+from .timing import ContextBoundIterator, capture_stage_timings
 
 app = FastAPI(title="PaperPilot API")
+logger = logging.getLogger(__name__)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
@@ -63,10 +69,24 @@ def _is_greeting(text: str) -> bool:
     }
 
 
+def _quick_reply(text: str) -> str | None:
+    """Answer standalone greetings and acknowledgments without invoking the model."""
+    normalized = " ".join(text.lower().strip().split()).strip(" .,!?;:").replace(",", "")
+    if _is_greeting(text):
+        return "Hi! How can I help you with your documents today?"
+    if normalized in {
+        "thanks", "thank you", "thanks a lot", "thank you so much", "thanks so much",
+        "ok thanks", "okay thanks", "alright thanks", "got it thanks", "great thanks",
+        "ok thank you", "okay thank you",
+    }:
+        return "You're welcome! Let me know if you need anything else."
+    return None
+
+
 def _chat_title(messages: list[dict]) -> str:
     for message in messages:
         content = str(message.get("content", "")).strip()
-        if message.get("role") == "user" and content and not _is_greeting(content):
+        if message.get("role") == "user" and content and not _quick_reply(content):
             return content[:48]
     return "New chat"
 
@@ -101,10 +121,15 @@ def _provider_ready(settings) -> bool:
         return False
 
 
-def _manifest(pdf_files: list[Path]) -> list[dict[str, int | str]]:
+def _manifest(document_files: list[Path]) -> list[dict[str, int | str]]:
     return [
-        {"name": path.name, "size": path.stat().st_size, "modified": path.stat().st_mtime_ns}
-        for path in pdf_files
+        {
+            "index_version": 2,
+            "name": path.name,
+            "size": path.stat().st_size,
+            "modified": path.stat().st_mtime_ns,
+        }
+        for path in document_files
     ]
 
 
@@ -119,8 +144,15 @@ def _index_documents() -> None:
         return
     settings = get_settings()
     try:
-        files = sorted(settings.pdf_directory.glob("*.pdf"))
+        files = sorted(
+            path for path in settings.pdf_directory.iterdir()
+            if path.is_file() and path.suffix.lower() in SUPPORTED_EXTENSIONS
+        ) if settings.pdf_directory.exists() else []
         if not files:
+            collection = get_provider_collection(settings)
+            if collection.count():
+                collection.delete(where={"source": {"$ne": ""}})
+            _manifest_path(settings, collection).write_text("[]", encoding="utf-8")
             INDEX_STATE.update(status="idle", message="", chunks=0)
             return
         INDEX_STATE.update(status="indexing", message="Preparing PDFs for chat…")
@@ -138,15 +170,16 @@ def _index_documents() -> None:
 
 
 def _needs_indexing(settings) -> bool:
-    files = sorted(settings.pdf_directory.glob("*.pdf"))
-    if not files:
-        return False
+    files = sorted(
+        path for path in settings.pdf_directory.iterdir()
+        if path.is_file() and path.suffix.lower() in SUPPORTED_EXTENSIONS
+    ) if settings.pdf_directory.exists() else []
     collection = get_provider_collection(settings)
     try:
         saved = json.loads(_manifest_path(settings, collection).read_text(encoding="utf-8"))
     except (FileNotFoundError, json.JSONDecodeError):
         saved = None
-    return saved != _manifest(files)
+    return saved != _manifest(files) or (not files and collection.count() > 0)
 
 
 @app.on_event("startup")
@@ -160,11 +193,14 @@ def _startup_index() -> None:
 @app.get("/api/bootstrap")
 def bootstrap() -> dict:
     settings = get_settings()
-    pdfs = sorted(settings.pdf_directory.glob("*.pdf")) if settings.pdf_directory.exists() else []
+    documents = sorted(
+        path for path in settings.pdf_directory.iterdir()
+        if path.is_file() and path.suffix.lower() in SUPPORTED_EXTENSIONS
+    ) if settings.pdf_directory.exists() else []
     collection = get_provider_collection(settings)
     return {
         "chats": _load_chats(),
-        "documents": [path.name for path in pdfs],
+        "documents": [path.name for path in documents],
         "provider_ready": _provider_ready(settings),
         "indexed_chunks": collection.count(),
         "index": INDEX_STATE.copy(),
@@ -203,27 +239,133 @@ def delete_chat(chat_id: str) -> None:
 async def upload_documents(files: Annotated[list[UploadFile], File()]) -> dict:
     settings = get_settings()
     settings.pdf_directory.mkdir(parents=True, exist_ok=True)
-    saved_names = []
     for upload in files:
-        name = Path(upload.filename or "document.pdf").name
-        if not name.lower().endswith(".pdf"):
-            raise HTTPException(status_code=400, detail=f"{name} is not a PDF")
+        name = Path(upload.filename or "document").name
+        if Path(name).suffix.lower() not in SUPPORTED_EXTENSIONS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"{name} is not a supported PDF, image, audio, or video file",
+            )
         content = await upload.read()
-        if not content.startswith(b"%PDF"):
+        if name.lower().endswith(".pdf") and not content.startswith(b"%PDF"):
             raise HTTPException(status_code=400, detail=f"{name} is not a valid PDF")
+        if not content:
+            raise HTTPException(status_code=400, detail=f"{name} is empty")
         (settings.pdf_directory / name).write_bytes(content)
-        saved_names.append(name)
-    if saved_names:
+    if files:
         if not _provider_ready(settings):
             raise HTTPException(status_code=503, detail="The selected model service is not available")
-        INDEX_STATE.update(status="queued", message="Upload complete. Indexing PDFs…")
+        INDEX_STATE.update(status="queued", message="Upload complete. Indexing documents…")
         EXECUTOR.submit(_index_documents)
-    return {"documents": saved_names, "index": INDEX_STATE.copy()}
+    all_documents = sorted(
+        path.name for path in settings.pdf_directory.iterdir()
+        if path.is_file() and path.suffix.lower() in SUPPORTED_EXTENSIONS
+    )
+    return {"documents": all_documents, "index": INDEX_STATE.copy()}
+
+
+@app.delete("/api/documents/{filename}")
+def delete_document(filename: str) -> dict:
+    settings = get_settings()
+    if Path(filename).name != filename or Path(filename).suffix.lower() not in SUPPORTED_EXTENSIONS:
+        raise HTTPException(status_code=404, detail="Document not found")
+    if INDEX_STATE.get("status") in {"queued", "indexing"} or not INDEX_LOCK.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="Wait for indexing to finish before deleting a document")
+    reindex_remaining = False
+    result: dict[str, object]
+    try:
+        previous_status = INDEX_STATE.get("status")
+        path = (settings.pdf_directory / filename).resolve()
+        if not path.is_relative_to(settings.pdf_directory.resolve()) or not path.is_file():
+            raise HTTPException(status_code=404, detail="Document not found")
+        path.unlink()
+
+        collection = get_provider_collection(settings)
+        if collection.count():
+            collection.delete(where={"source": str(path)})
+        remaining = sorted(
+            item for item in settings.pdf_directory.iterdir()
+            if item.is_file() and item.suffix.lower() in SUPPORTED_EXTENSIONS
+        ) if settings.pdf_directory.exists() else []
+        chunks = collection.count()
+        reindex_remaining = bool(remaining) and (previous_status == "error" or chunks == 0)
+        if reindex_remaining:
+            INDEX_STATE.update(
+                status="queued", message="Document deleted. Reindexing remaining documents…", chunks=0
+            )
+        else:
+            _manifest_path(settings, collection).write_text(
+                json.dumps(_manifest(remaining), indent=2), encoding="utf-8"
+            )
+            status = "ready" if chunks else "idle"
+            INDEX_STATE.update(status=status, message="Document deleted.", chunks=chunks)
+        result = {"documents": [item.name for item in remaining], "index": INDEX_STATE.copy()}
+    finally:
+        INDEX_LOCK.release()
+    if reindex_remaining:
+        EXECUTOR.submit(_index_documents)
+    return result
 
 
 @app.get("/api/index")
 def index_status() -> dict:
     return INDEX_STATE.copy()
+
+
+@app.get("/api/media/{filename}")
+def get_media(filename: str) -> FileResponse:
+    settings = get_settings()
+    if Path(filename).name != filename:
+        raise HTTPException(status_code=404, detail="Media not found")
+    path = (settings.pdf_directory / filename).resolve()
+    if not path.is_relative_to(settings.pdf_directory.resolve()) or not path.is_file():
+        raise HTTPException(status_code=404, detail="Media not found")
+    if path.suffix.lower() not in SUPPORTED_EXTENSIONS - {".wav", ".mp3", ".m4a", ".aac", ".flac", ".ogg", ".wma"}:
+        raise HTTPException(status_code=404, detail="Media not found")
+    return FileResponse(path, headers={"Content-Disposition": "inline"})
+
+
+@app.get("/api/database-media/{token}")
+def get_database_media(token: str) -> Response:
+    """Proxy only database-linked certificate files without exposing source paths in chat."""
+    settings = get_settings()
+    if not settings.database_media_base_url:
+        raise HTTPException(status_code=503, detail="Certificate file service is not configured")
+    relative_path = resolve_media_path(token)
+    if not relative_path:
+        raise HTTPException(status_code=404, detail="Media not found")
+    parts = relative_path.replace("\\", "/").split("/")
+    if len(parts) < 7 or parts[:4] != ["api", "v1", "crew", "file_upload"] or any(part in {"", ".", ".."} for part in parts):
+        raise HTTPException(status_code=404, detail="Media not found")
+    from urllib.error import HTTPError, URLError
+    from urllib.request import Request, urlopen
+    from urllib.parse import quote
+    service_prefix = "api/v1/crew/"
+    normalized_path = relative_path.replace("\\", "/")
+    if not normalized_path.startswith(service_prefix):
+        raise HTTPException(status_code=404, detail="Media not found")
+    file_path = normalized_path[len(service_prefix):]
+    url = f"{settings.database_media_base_url.rstrip('/')}/{quote(file_path, safe='/')}"
+    headers = {"Accept": "application/pdf,image/*,video/*"}
+    if settings.database_media_token:
+        headers["Authorization"] = f"Bearer {settings.database_media_token}"
+    try:
+        with urlopen(Request(url, headers=headers), timeout=20) as upstream:
+            content_type = upstream.headers.get_content_type()
+            if not (content_type == "application/pdf" or content_type.startswith(("image/", "video/"))):
+                raise HTTPException(status_code=415, detail="Unsupported certificate media")
+            body = upstream.read(32 * 1024 * 1024 + 1)
+            if len(body) > 32 * 1024 * 1024:
+                raise HTTPException(status_code=413, detail="Certificate media is too large")
+            return Response(content=body, media_type=content_type, headers={"Content-Disposition": "inline"})
+    except HTTPException:
+        raise
+    except HTTPError as error:
+        logger.warning("Certificate file service returned HTTP %s", error.code)
+        raise HTTPException(status_code=502, detail="Certificate media could not be retrieved")
+    except (URLError, TimeoutError, OSError) as error:
+        logger.warning("Certificate file service is unreachable (%s)", type(error).__name__)
+        raise HTTPException(status_code=502, detail="Certificate media could not be retrieved")
 
 
 @app.post("/api/chats/{chat_id}/messages")
@@ -239,28 +381,51 @@ def send_message(chat_id: str, request: ChatRequest) -> StreamingResponse:
     _save_chats(saved)
 
     def response_stream():
+        started_at = time.perf_counter()
         answer_parts: list[str] = []
+        media: list[dict[str, str]] = []
+        duration_seconds = 0.0
+        failed = False
         try:
-            if _is_greeting(question):
-                chunks = iter(("Hi! How can I help you with your PDFs today?",))
-            else:
-                settings = get_settings()
-                client = OpenAI(api_key=settings.openai_api_key) if settings.provider == "openai" else None
-                chunks = ask_stream(question, settings, client, history)
-            for part in chunks:
-                answer_parts.append(part)
-                yield part
-        except Exception as error:
-            answer_parts.append(f"I couldn't complete that request: {error}")
-            yield answer_parts[-1]
+            with capture_stage_timings(chat_id) as stage_timings:
+                try:
+                    quick_reply = _quick_reply(question)
+                    if quick_reply:
+                        events = iter(({"type": "text", "text": quick_reply}, {"type": "media", "media": []}))
+                    else:
+                        settings = get_settings()
+                        client = OpenAI(api_key=settings.openai_api_key) if settings.provider == "openai" else None
+                        events = ask_stream_with_media(question, settings, client, history)
+                    for event in events:
+                        if event["type"] == "text":
+                            answer_parts.append(str(event["text"]))
+                        else:
+                            media = event.get("media", [])
+                        yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+                except Exception as error:
+                    failed = True
+                    logger.exception("Chat request failed for chat %s", chat_id)
+                    message = "The request took too long. Please try again." if "timeout" in str(error).lower() or "timed out" in str(error).lower() else "I couldn't complete that request. Please try again."
+                    yield f"data: {json.dumps({'type': 'error', 'message': message}, ensure_ascii=False)}\n\n"
+                duration_seconds = round(time.perf_counter() - started_at, 2)
+                if not failed:
+                    yield f"data: {json.dumps({'type': 'timing', 'seconds': duration_seconds, 'stages_ms': stage_timings})}\n\n"
         finally:
             current = _load_chats()
             current_chat = next((entry for entry in current if entry.get("id") == chat_id), None)
-            if current_chat is not None:
-                current_chat["messages"].append({"role": "assistant", "content": "".join(answer_parts)})
+            if current_chat is not None and (answer_parts or media):
+                current_chat["messages"].append({
+                    "role": "assistant",
+                    "content": "".join(answer_parts),
+                    "media": media,
+                    **({} if failed else {"duration_seconds": duration_seconds}),
+                })
                 _save_chats(current)
 
-    return StreamingResponse(response_stream(), media_type="text/plain; charset=utf-8")
+    return StreamingResponse(
+        ContextBoundIterator(response_stream()),
+        media_type="text/event-stream; charset=utf-8",
+    )
 
 
 FRONTEND_DIST = PROJECT_ROOT / "frontend" / "dist"

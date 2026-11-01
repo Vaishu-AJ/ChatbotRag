@@ -1,0 +1,34 @@
+---
+type: Reference
+title: Replace with a specific concept title
+description: One sentence describing the reviewed concept.
+tags:
+  - example
+aliases:
+  - another exact name people might ask for
+status: draft
+generated:
+  by: human:owner
+  at: "REPLACE_WITH_ISO_8601_TIMESTAMP"
+sources:
+  - id: primary-source
+    resource: ../documents/source.pdf
+    title: Primary source document
+# Optional live PostgreSQL mapping; replace with reviewed names from your schema.
+# Credentials belong in DATABASE_URL in .env, never here.
+# database:
+#   schema: public
+#   table: customers
+#   search_columns: [full_name]
+#   return_columns: [full_name, customer_id, status]
+#   ignored_terms: [customer, record, details]
+#   limit: 8
+---
+
+# Replace with the concept title
+
+Write only supported facts here. Add page numbers or sections when useful. Keep the concept in `draft` until reviewed; then change it to `stable` and add a real verification record, for example:
+
+    verified:
+      by: human:your-reviewer-id
+      at: "2026-10-25T12:00:00Z"

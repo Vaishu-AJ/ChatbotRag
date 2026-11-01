@@ -17,6 +17,8 @@ dependencies = [
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.30.0",
     "python-multipart>=0.0.9",
+    "PyYAML>=6.0",
+    "pg8000>=1.31",
 ]
 
 [project.scripts]
@@ -25,6 +27,7 @@ rag-chat = "rag_system.web_app:main"
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0.0", "ruff>=0.5.0"]
+media = ["faster-whisper>=1.1.0", "opencv-python-headless>=4.10.0"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

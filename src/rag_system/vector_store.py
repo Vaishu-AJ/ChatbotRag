@@ -32,5 +32,12 @@ def store_chunks(collection, chunks: list[dict[str, object]], embeddings: list[l
         ids=[str(chunk["id"]) for chunk in chunks],
         documents=[str(chunk["text"]) for chunk in chunks],
         embeddings=embeddings,
-        metadatas=[{"source": str(chunk["source"]), "page": int(chunk["page"])} for chunk in chunks],
+        metadatas=[
+            {
+                key: value
+                for key, value in chunk.items()
+                if key not in {"id", "text"} and isinstance(value, (str, int, float, bool))
+            }
+            for chunk in chunks
+        ],
     )

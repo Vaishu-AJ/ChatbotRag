@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "description": "Small deterministic smoke set for database, document, and hybrid route decisions. Expand with anonymized production queries and adjudicated expected concepts.",
+  "cases": [
+    {"question": "Find crew code 123456 and show their passport expiry", "route": "database", "concept": "Crew Passport Lookup"},
+    {"question": "What is the passport number for crew 123456?", "route": "database", "concept": "Crew Passport Lookup"},
+    {"question": "Look up the crew member's medical certificate expiry", "route": "database", "concept": "Crew Certificate Lookup"},
+    {"question": "Show the salary and payroll details for crew 123456", "route": "database", "concept": "Crew Certificate Lookup"},
+    {"question": "What are this crew member's bank account details?", "route": "database", "concept": "Crew Certificate Lookup"},
+    {"question": "Find the license certificate for crew 123456", "route": "database", "concept": "Crew Certificate Lookup"},
+    {"question": "Open the passport scan linked to crew 123456", "route": "hybrid", "concept": "Crew Passport Lookup"},
+    {"question": "Show me the image of this crew member's license", "route": "hybrid", "concept": "Crew Certificate Lookup"},
+    {"question": "Find the attached medical document for crew 123456", "route": "hybrid", "concept": "Crew Certificate Lookup"},
+    {"question": "Summarize the attached safety manual", "route": "document", "concept": null},
+    {"question": "What does this uploaded PDF say about leave policy?", "route": "document", "concept": null},
+    {"question": "Describe the people visible in the uploaded photo", "route": "document", "concept": null},
+    {"question": "What is the expiry date on the seafarer travel document?", "route": "database", "concept": "Crew Passport Lookup"},
+    {"question": "Find crew details for employee 123456", "route": "database", "concept": "Crew Certificate Lookup"},
+    {"question": "Extract the certificate number from this uploaded certificate", "route": "document", "concept": null}
+  ]
+}

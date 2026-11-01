@@ -1,10 +1,12 @@
-"""Split PDF page text into overlapping chunks while keeping source metadata."""
+"""Split extracted document text into overlapping chunks with source metadata."""
+
+import hashlib
 
 
 def chunk_pages(
     pages: list[dict[str, object]], chunk_size: int = 1000, overlap: int = 150
 ) -> list[dict[str, object]]:
-    """Split each page's text into character-based chunks."""
+    """Split each extracted text block into character-based chunks."""
     if chunk_size <= 0:
         raise ValueError("chunk_size must be greater than zero")
     if overlap < 0 or overlap >= chunk_size:
@@ -18,12 +20,16 @@ def chunk_pages(
         while start < len(text):
             chunk_text = text[start : start + chunk_size].strip()
             if chunk_text:
+                source = str(page["source"])
+                location = str(page.get("location", page.get("page", "")))
+                digest = hashlib.sha256(
+                    f"{source}|{location}|{start}|{chunk_text}".encode()
+                ).hexdigest()
                 chunks.append(
                     {
-                        "id": f"chunk-{len(chunks)}",
+                        "id": digest,
                         "text": chunk_text,
-                        "source": str(page["source"]),
-                        "page": int(page["page"]),
+                        **{key: value for key, value in page.items() if key != "text"},
                     }
                 )
             start += step
